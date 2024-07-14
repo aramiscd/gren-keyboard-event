@@ -1,7 +1,1 @@
-.*.swp
-.DS_Store
-elm-stuff
-index.js
-index.html
-node_modules
-build
+.gren

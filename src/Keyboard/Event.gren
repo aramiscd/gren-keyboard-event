@@ -1,0 +1,133 @@
+module Keyboard.Event exposing
+    ( KeyboardEvent
+    , decodeKeyboardEvent
+    , considerKeyboardEvent
+    , KeyCode
+    , decodeKeyCode
+    , decodeKey
+    )
+
+import Json.Decode exposing
+    ( Decoder , andThen , bool , fail , field , int
+    , map , map7 , maybe , oneOf , string , succeed
+    )
+import Keyboard.Key exposing ( Key , fromCode )
+import String
+
+
+type alias KeyCode = Int
+
+
+-- Decodes `keyCode`, `which` or `charCode` from a keyboard event
+-- to get a numeric code for the key that was pressed.
+--
+-- See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
+decodeKeyCode : Decoder KeyCode
+decodeKeyCode =
+    oneOf
+        [ field "keyCode" decodeNonZero
+        , field "which" decodeNonZero
+        , field "charCode" decodeNonZero
+        , succeed 0
+        ]
+
+
+-- Decode an Int, but only if it's not zero.
+decodeNonZero : Decoder Int
+decodeNonZero =
+    andThen
+        ( \ code ->
+            if code == 0
+            then fail "code was zero"
+            else succeed code
+        )
+        int
+
+
+-- Decode the `key` field from a keyboard event.
+--
+-- Results in `Nothing` if the `key` field is not present, or blank.
+-- See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
+decodeKey : Decoder ( Maybe String )
+decodeKey =
+    field "key" string
+        |> andThen
+            ( \ key ->
+                if String.isEmpty key
+                then fail "empty key"
+                else succeed key
+            )
+        |> maybe
+
+
+-- A representation of a keyboard event.
+
+-- The `key` field may or may not be present, depending on the
+-- listener ("keydown" vs. "keypress" vs. "keyup"), browser, and key
+-- pressed (character key vs. special key). If not present, it will
+-- be `Nothing` here.
+
+-- The `keyCode` is normalized by `decodeKeyboardEvent` to use
+-- whichever of `which`, `keyCode` or `charCode` is provided, and
+-- made type-safe via `Keyboard.Key` (see the excellent
+-- SwiftsNamesake/proper-keyboardfor further manipulation of a
+-- `Key`).
+--
+-- See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
+-- and http://package.elm-lang.org/packages/SwiftsNamesake/proper-keyboard/latest
+type alias KeyboardEvent =
+    { altKey : Bool
+    , ctrlKey : Bool
+    , key : Maybe String
+    , keyCode : Key
+    , metaKey : Bool
+    , repeat : Bool
+    , shiftKey : Bool
+    }
+
+
+-- Decode a `KeyboardEvent` from a keyboard event.
+--
+-- See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
+decodeKeyboardEvent : Decoder KeyboardEvent
+decodeKeyboardEvent =
+    map7
+        ( \ altKey ctrlKey key keyCode metaKey repeat shiftKey ->
+            { altKey = altKey
+            , ctrlKey = ctrlKey
+            , key = key
+            , keyCode = keyCode
+            , metaKey = metaKey
+            , repeat = repeat
+            , shiftKey = shiftKey
+            }
+        )
+        ( field "altKey" bool )
+        ( field "ctrlKey" bool )
+        decodeKey
+        ( map fromCode decodeKeyCode )
+        ( field "metaKey" bool )
+        ( field "repeat" bool )
+        ( field "shiftKey" bool )
+
+
+-- You provide a function which, given a `KeyboardEvent`, turns it
+-- into a message your `update` function can handle. You get back a
+-- `Decoder` for those messages.
+--
+-- When your function returns `Nothing`, the decoder will fail. This
+-- means that the event will simply be ignored -- that is, it will
+-- not reach your `update` function at all.
+--
+-- Essentially, this allows you to filter keyboard events inside the
+-- decoder itself, rather than in the `update` function. Whether this
+-- is a good idea or not will depend on your scenario.
+considerKeyboardEvent : ( KeyboardEvent -> Maybe msg ) -> Decoder msg
+considerKeyboardEvent func =
+    andThen
+        ( \ event ->
+            case func event of
+                Just msg -> succeed msg
+                Nothing -> fail "Ignoring keyboard event"
+        )
+        decodeKeyboardEvent
